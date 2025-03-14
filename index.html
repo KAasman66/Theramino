@@ -107,9 +107,9 @@
       cursor: pointer;
       box-shadow: 0 0 5px var(--main-color);
     }
-    /* Touch area takes up the remaining space */
+    /* Touch area takes up 40% of the screen height */
     #touchArea {
-      flex: 1 1 auto;
+      flex: 0 0 40%;
       margin: 5px;
       border: 2px solid var(--main-color);
       border-radius: 10px;
@@ -118,30 +118,58 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      overflow: hidden;
+    }
+    /* Animated particle effect for touch area */
+    #touchArea::after {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+      opacity: 0.5;
+      animation: particleGlow 3s infinite;
+      pointer-events: none;
+    }
+    @keyframes particleGlow {
+      0% { transform: scale(1); opacity: 0.6; }
+      50% { transform: scale(1.2); opacity: 0.8; }
+      100% { transform: scale(1); opacity: 0.6; }
     }
     #touchHint {
       font-size: 1rem;
       color: var(--main-color);
       pointer-events: none;
+      position: relative;
+      z-index: 2;
     }
-    /* Reserved bottom area: 12.5% height */
+    /* Reserved bottom area: 45% height (for extra controls if needed) */
     #reserved {
-      flex: 0 0 12.5%;
+      flex: 0 0 45%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.1);
     }
     /* Per-finger chug buttons inside the touch area */
     .chug-button {
       position: absolute;
-      width: 30px;
-      height: 30px;
+      width: 40px;
+      height: 40px;
+      line-height: 40px;
       background: var(--main-color);
-      border: 1px solid #fff;
-      color: #000;
-      font-size: 0.55rem;
-      text-align: center;
-      line-height: 30px;
+      border: 2px solid #fff;
       border-radius: 4px;
+      color: #000;
+      font-size: 0.7rem;
+      text-align: center;
       z-index: 20;
       cursor: pointer;
+      animation: pulsate 2s infinite;
+    }
+    @keyframes pulsate {
+      0% { box-shadow: 0 0 5px var(--main-color); }
+      50% { box-shadow: 0 0 15px var(--main-color); }
+      100% { box-shadow: 0 0 5px var(--main-color); }
     }
   </style>
 </head>
@@ -170,10 +198,6 @@
         <input type="range" id="distortionSlider" class="slider" min="0" max="800" step="1" value="400">
       </div>
       <div class="control-item">
-        <label>Phsr</label>
-        <input type="range" id="phaserSlider" class="slider" min="0.1" max="5" step="0.1" value="1">
-      </div>
-      <div class="control-item">
         <label>Drum</label>
         <button id="drumBtn" class="mini-button">Off</button>
       </div>
@@ -182,7 +206,7 @@
     <div id="touchArea">
       <div id="touchHint">Touch Here</div>
     </div>
-    <!-- Reserved bottom -->
+    <!-- Reserved bottom (extra control area if needed) -->
     <div id="reserved"></div>
   </div>
 
@@ -190,9 +214,6 @@
     let audioCtx = null;
     let masterGain = null;
     let distortionNode = null;
-    let phaserFilters = [];
-    let phaserLFO = null;
-    let phaserLFOGain = null;
     const activeOscillators = {};
     let drumLoopEnabled = false;
     let drumLoopInterval = null;
@@ -285,27 +306,10 @@
       masterGain.gain.value = parseFloat(document.getElementById('volumeSlider').value);
       distortionNode = audioCtx.createWaveShaper();
       updateDistortionCurve();
-      for (let i = 0; i < 4; i++) {
-        let filter = audioCtx.createBiquadFilter();
-        filter.type = "allpass";
-        filter.frequency.value = 1000;
-        phaserFilters.push(filter);
-      }
-      distortionNode.connect(phaserFilters[0]);
-      for (let i = 0; i < phaserFilters.length - 1; i++) {
-        phaserFilters[i].connect(phaserFilters[i+1]);
-      }
-      phaserFilters[phaserFilters.length - 1].connect(audioCtx.destination);
-      phaserLFO = audioCtx.createOscillator();
-      phaserLFOGain = audioCtx.createGain();
-      phaserLFO.frequency.value = parseFloat(document.getElementById('phaserSlider').value);
-      phaserLFOGain.gain.value = 500;
-      phaserLFO.connect(phaserLFOGain);
-      phaserFilters.forEach(filter => {
-        phaserLFOGain.connect(filter.frequency);
-      });
-      phaserLFO.start();
+      // Simple chain: masterGain -> distortionNode -> destination
       masterGain.connect(distortionNode);
+      distortionNode.connect(audioCtx.destination);
+
       document.getElementById('volumeSlider').addEventListener('input', () => {
         masterGain.gain.value = parseFloat(document.getElementById('volumeSlider').value);
       });
@@ -313,9 +317,6 @@
       document.getElementById('tempoSlider').addEventListener('input', () => {
         updateAllChugTimers();
         if (drumLoopEnabled) updateDrumLoop();
-      });
-      document.getElementById('phaserSlider').addEventListener('input', () => {
-        phaserLFO.frequency.value = parseFloat(document.getElementById('phaserSlider').value);
       });
       document.getElementById('touchArea').addEventListener('touchstart', () => {
         const hint = document.getElementById('touchHint');
@@ -346,7 +347,6 @@
       const chugGain = audioCtx.createGain();
       const panner = audioCtx.createStereoPanner();
       osc.type = 'sawtooth';
-      // Compute position relative to touchArea
       const touchAreaRect = document.getElementById('touchArea').getBoundingClientRect();
       const relativeY = touch.clientY - touchAreaRect.top;
       const relativeX = touch.clientX - touchAreaRect.left;
@@ -360,16 +360,15 @@
       chugGain.connect(panner);
       panner.connect(masterGain);
       osc.start();
-      // Create chug button and add it inside the touch area
+      // Create enlarged chug button
       const chugButton = document.createElement('div');
       chugButton.className = 'chug-button';
       let chugMode = 0; // 0: continuous, 1: 8th, 2: 16th
       chugButton.textContent = "Cont";
-      let btnX = relativeX - 15;
-      let btnY = relativeY - 15;
-      // Keep the button within bounds
-      btnX = Math.max(0, Math.min(btnX, touchAreaRect.width - 30));
-      btnY = Math.max(0, Math.min(btnY, touchAreaRect.height - 30));
+      let btnX = relativeX - 20;
+      let btnY = relativeY - 20;
+      btnX = Math.max(0, Math.min(btnX, touchAreaRect.width - 40));
+      btnY = Math.max(0, Math.min(btnY, touchAreaRect.height - 40));
       chugButton.style.left = btnX + 'px';
       chugButton.style.top = btnY + 'px';
       document.getElementById('touchArea').appendChild(chugButton);
@@ -391,10 +390,10 @@
       const newFreq = mapYToFrequency(relativeY, touchAreaRect.height);
       oscObj.osc.frequency.setValueAtTime(newFreq, audioCtx.currentTime);
       oscObj.panner.pan.setValueAtTime(mapXToPan(relativeX, touchAreaRect.width), audioCtx.currentTime);
-      let btnX = relativeX - 15;
-      let btnY = relativeY - 15;
-      btnX = Math.max(0, Math.min(btnX, touchAreaRect.width - 30));
-      btnY = Math.max(0, Math.min(btnY, touchAreaRect.height - 30));
+      let btnX = relativeX - 20;
+      let btnY = relativeY - 20;
+      btnX = Math.max(0, Math.min(btnX, touchAreaRect.width - 40));
+      btnY = Math.max(0, Math.min(btnY, touchAreaRect.height - 40));
       oscObj.chugButton.style.left = btnX + 'px';
       oscObj.chugButton.style.top = btnY + 'px';
     }
